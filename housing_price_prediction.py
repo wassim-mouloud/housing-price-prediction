@@ -1,7 +1,11 @@
 """
-Housing Price Prediction Model
+Housing Price Prediction Model (Optimized)
 This script builds and evaluates a machine learning model to predict housing prices
-using the California Housing dataset.
+using the California Housing dataset. 
+
+Adjustments made:
+1. Removed capped data (>= $500,000) to improve accuracy.
+2. Tuned Random Forest hyperparameters to prevent overfitting.
 """
 
 import pandas as pd
@@ -27,7 +31,7 @@ np.random.seed(42)
 # ============================================================================
 
 print("=" * 80)
-print("HOUSING PRICE PREDICTION MODEL")
+print("HOUSING PRICE PREDICTION MODEL (OPTIMIZED)")
 print("=" * 80)
 
 # Load the data
@@ -35,21 +39,18 @@ df = pd.read_csv('housing.csv')
 
 print("\n1. DATA OVERVIEW")
 print("-" * 80)
-print(f"Dataset shape: {df.shape}")
+print(f"Original Dataset shape: {df.shape}")
+
+# --- ADJUSTMENT 1: REMOVE CAPPED VALUES ---
+# The dataset caps houses at 500,001. This creates a fake "wall" in the data.
+# We remove these to help the model learn the true price curve.
+print("\n[ADJUSTMENT] Filtering out capped values ($500,001)...")
+df = df[df['median_house_value'] < 500000]
+print(f"New Dataset shape: {df.shape}")
+# ------------------------------------------
+
 print(f"\nFirst few rows:")
 print(df.head())
-
-print(f"\nData types:")
-print(df.dtypes)
-
-print(f"\nMissing values:")
-print(df.isnull().sum())
-
-print(f"\nBasic statistics:")
-print(df.describe())
-
-print(f"\nTarget variable (median_house_value) distribution:")
-print(df['median_house_value'].describe())
 
 # ============================================================================
 # 2. DATA PREPROCESSING
@@ -67,9 +68,6 @@ numerical_features = ['longitude', 'latitude', 'housing_median_age', 'total_room
                      'total_bedrooms', 'population', 'households', 'median_income']
 categorical_features = ['ocean_proximity']
 
-print(f"Numerical features: {numerical_features}")
-print(f"Categorical features: {categorical_features}")
-
 # ============================================================================
 # 3. FEATURE ENGINEERING
 # ============================================================================
@@ -85,10 +83,7 @@ X['population_per_household'] = X['population'] / X['households']
 # Update numerical features list
 numerical_features.extend(['rooms_per_household', 'bedrooms_per_room', 'population_per_household'])
 
-print("Created new features:")
-print("- rooms_per_household")
-print("- bedrooms_per_room")
-print("- population_per_household")
+print("Created new features: rooms_per_household, bedrooms_per_room, population_per_household")
 
 # ============================================================================
 # 4. TRAIN-TEST SPLIT
@@ -111,27 +106,20 @@ print(f"Test set size: {X_test.shape[0]} samples")
 print("\n\n5. CREATING PREPROCESSING PIPELINE")
 print("-" * 80)
 
-# Numerical pipeline: impute missing values and scale
 numerical_pipeline = Pipeline([
     ('imputer', SimpleImputer(strategy='median')),
     ('scaler', StandardScaler())
 ])
 
-# Categorical pipeline: impute and one-hot encode
 categorical_pipeline = Pipeline([
     ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
     ('onehot', OneHotEncoder(handle_unknown='ignore'))
 ])
 
-# Combine pipelines
 preprocessor = ColumnTransformer([
     ('num', numerical_pipeline, numerical_features),
     ('cat', categorical_pipeline, categorical_features)
 ])
-
-print("Preprocessing pipeline created:")
-print("- Numerical features: Imputation (median) + Scaling")
-print("- Categorical features: Imputation (constant) + One-Hot Encoding")
 
 # ============================================================================
 # 6. MODEL TRAINING
@@ -140,11 +128,26 @@ print("- Categorical features: Imputation (constant) + One-Hot Encoding")
 print("\n\n6. MODEL TRAINING")
 print("-" * 80)
 
-# Define models to compare
+# --- ADJUSTMENT 2: TUNED HYPERPARAMETERS ---
+# We added constraints (max_depth, min_samples_leaf) to stop overfitting.
 models = {
     'Linear Regression': LinearRegression(),
-    'Random Forest': RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1),
-    'Gradient Boosting': GradientBoostingRegressor(n_estimators=100, random_state=42)
+    
+    'Random Forest (Tuned)': RandomForestRegressor(
+        n_estimators=200,      # More trees
+        max_depth=20,          # Restrict depth to prevent memorization
+        min_samples_split=5,   # Requires 5 samples to split a node
+        min_samples_leaf=4,    # Requires 4 samples in a leaf (smooths noise)
+        random_state=42, 
+        n_jobs=-1
+    ),
+    
+    'Gradient Boosting': GradientBoostingRegressor(
+        n_estimators=150, 
+        max_depth=5,           # Slightly deeper than default (3)
+        learning_rate=0.1,
+        random_state=42
+    )
 }
 
 results = {}
@@ -210,15 +213,12 @@ best_model_name = min(results.keys(), key=lambda x: results[x]['test_rmse'])
 best_model = results[best_model_name]['model']
 
 print(f"\nBest Model: {best_model_name}")
-print(f"Test RMSE: ${results[best_model_name]['test_rmse']:,.2f}")
-print(f"Test R²: {results[best_model_name]['test_r2']:.4f}")
-print(f"Test MAE: ${results[best_model_name]['test_mae']:,.2f}")
 
 # ============================================================================
-# 8. FEATURE IMPORTANCE (for tree-based models)
+# 8. FEATURE IMPORTANCE
 # ============================================================================
 
-if best_model_name in ['Random Forest', 'Gradient Boosting']:
+if 'Forest' in best_model_name or 'Boosting' in best_model_name:
     print("\n\n8. FEATURE IMPORTANCE")
     print("-" * 80)
 
@@ -265,11 +265,10 @@ print("-" * 80)
 
 import pickle
 
-# Save the model
 with open('best_housing_model.pkl', 'wb') as f:
     pickle.dump(best_model, f)
 
-print(f"Best model ({best_model_name}) saved to 'best_housing_model.pkl'")
+print(f"Best model saved to 'best_housing_model.pkl'")
 
 # ============================================================================
 # 11. VISUALIZATIONS
@@ -278,40 +277,39 @@ print(f"Best model ({best_model_name}) saved to 'best_housing_model.pkl'")
 print("\n\n11. CREATING VISUALIZATIONS")
 print("-" * 80)
 
-# Create a figure with multiple subplots
 fig, axes = plt.subplots(2, 2, figsize=(15, 12))
 
 # 1. Actual vs Predicted
-axes[0, 0].scatter(y_test, results[best_model_name]['predictions'], alpha=0.5)
+axes[0, 0].scatter(y_test, results[best_model_name]['predictions'], alpha=0.5, color='royalblue')
 axes[0, 0].plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
 axes[0, 0].set_xlabel('Actual Price ($)')
 axes[0, 0].set_ylabel('Predicted Price ($)')
-axes[0, 0].set_title('Actual vs Predicted Prices')
+axes[0, 0].set_title(f'Actual vs Predicted ({best_model_name})')
 axes[0, 0].grid(True, alpha=0.3)
 
 # 2. Residual plot
 residuals = y_test - results[best_model_name]['predictions']
-axes[0, 1].scatter(results[best_model_name]['predictions'], residuals, alpha=0.5)
+axes[0, 1].scatter(results[best_model_name]['predictions'], residuals, alpha=0.5, color='green')
 axes[0, 1].axhline(y=0, color='r', linestyle='--', lw=2)
 axes[0, 1].set_xlabel('Predicted Price ($)')
 axes[0, 1].set_ylabel('Residuals ($)')
-axes[0, 1].set_title('Residual Plot')
+axes[0, 1].set_title('Residual Plot (Homoscedasticity Check)')
 axes[0, 1].grid(True, alpha=0.3)
 
 # 3. Model comparison (RMSE)
 model_names = list(results.keys())
 test_rmses = [results[m]['test_rmse'] for m in model_names]
-axes[1, 0].bar(model_names, test_rmses, color=['blue', 'green', 'orange'])
+axes[1, 0].bar(model_names, test_rmses, color=['skyblue', 'lightgreen', 'orange'])
 axes[1, 0].set_ylabel('RMSE ($)')
-axes[1, 0].set_title('Model Comparison - Test RMSE')
+axes[1, 0].set_title('Model Comparison - Test RMSE (Lower is Better)')
 axes[1, 0].tick_params(axis='x', rotation=45)
 axes[1, 0].grid(True, alpha=0.3, axis='y')
 
 # 4. Distribution of prediction errors
-axes[1, 1].hist(residuals, bins=50, edgecolor='black', alpha=0.7)
+axes[1, 1].hist(residuals, bins=50, edgecolor='black', alpha=0.7, color='purple')
 axes[1, 1].set_xlabel('Prediction Error ($)')
 axes[1, 1].set_ylabel('Frequency')
-axes[1, 1].set_title('Distribution of Prediction Errors')
+axes[1, 1].set_title('Error Distribution')
 axes[1, 1].axvline(x=0, color='r', linestyle='--', lw=2)
 axes[1, 1].grid(True, alpha=0.3, axis='y')
 
@@ -322,5 +320,5 @@ print("Visualization saved to 'housing_price_model_evaluation.png'")
 plt.show()
 
 print("\n" + "=" * 80)
-print("MODEL TRAINING COMPLETE!")
+print("OPTIMIZED TRAINING COMPLETE!")
 print("=" * 80)
